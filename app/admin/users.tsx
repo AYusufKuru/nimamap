@@ -5,7 +5,6 @@ import { useAdminToast } from '@/contexts/AdminToastContext';
 import { useMunicipalities } from '@/contexts/MunicipalitiesContext';
 import { asHref } from '@/utils/asHref';
 import { getFunctionInvokeErrorMessage } from '@/utils/parseSupabaseFunctionError';
-import { WEB_APP_RESUME_EVENT } from '@/utils/webAppResume';
 import { MaterialIcons } from '@expo/vector-icons';
 import { Link, Redirect, router, useFocusEffect } from 'expo-router';
 import { useCallback, useEffect, useMemo, useState } from 'react';
@@ -137,15 +136,6 @@ export default function AdminUsersScreen() {
       if (session && profile?.role === 'admin') void loadProfiles();
     }, [loadHasAdmin, session, profile?.role, loadProfiles])
   );
-
-  useEffect(() => {
-    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
-    const onResume = () => {
-      if (hasAdmin && session && profile?.role === 'admin') void loadProfiles();
-    };
-    window.addEventListener(WEB_APP_RESUME_EVENT, onResume);
-    return () => window.removeEventListener(WEB_APP_RESUME_EVENT, onResume);
-  }, [hasAdmin, session, profile?.role, loadProfiles]);
 
   const runBootstrap = async () => {
     if (!bootEmail.trim() || !bootPassword || !bootSecret.trim()) {

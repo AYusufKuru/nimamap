@@ -3,9 +3,9 @@ import { Stack } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useState } from 'react';
+import { Platform } from 'react-native';
 import 'react-native-reanimated';
 
-import { WebTabResumeHandler } from '@/components/WebTabResumeHandler';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { AuthProvider } from '@/contexts/AuthContext';
 import { MunicipalitiesProvider } from '@/contexts/MunicipalitiesContext';
@@ -37,6 +37,24 @@ export default function RootLayout() {
     }
   }, [appReady]);
 
+  /** Web: başka sekmeye gidip geri gelince tam yenileme — tutarlı veri için en güvenilir yol */
+  useEffect(() => {
+    if (!appReady || Platform.OS !== 'web' || typeof document === 'undefined') return;
+    let wasHidden = false;
+    const onVis = () => {
+      if (document.visibilityState === 'hidden') {
+        wasHidden = true;
+        return;
+      }
+      if (document.visibilityState === 'visible' && wasHidden) {
+        wasHidden = false;
+        window.location.reload();
+      }
+    };
+    document.addEventListener('visibilitychange', onVis);
+    return () => document.removeEventListener('visibilitychange', onVis);
+  }, [appReady]);
+
   if (!appReady) {
     return null;
   }
@@ -44,7 +62,6 @@ export default function RootLayout() {
   return (
     <SafeAreaProvider>
       <AuthProvider>
-        <WebTabResumeHandler />
         <MunicipalitiesProvider>
         <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
           <Stack screenOptions={{ headerShown: false }}>

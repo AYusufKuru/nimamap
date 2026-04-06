@@ -2,9 +2,7 @@ import type { MunicipalityDef } from '@/constants/belediyeMapData';
 import { OTHER_MUNICIPALITY } from '@/constants/belediyeMapData';
 import { supabase } from '@/supabase';
 import { buildMunicipalitySearchQuery } from '@/utils/municipalityQuery';
-import { WEB_APP_RESUME_EVENT } from '@/utils/webAppResume';
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
-import { Platform } from 'react-native';
 
 export type MunicipalityRow = {
   id: string;
@@ -89,15 +87,6 @@ export function MunicipalitiesProvider({ children }: { children: React.ReactNode
       cancelled = true;
       subscription.unsubscribe();
     };
-  }, [load]);
-
-  useEffect(() => {
-    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
-    const onResume = () => {
-      void load();
-    };
-    window.addEventListener(WEB_APP_RESUME_EVENT, onResume);
-    return () => window.removeEventListener(WEB_APP_RESUME_EVENT, onResume);
   }, [load]);
 
   const municipalities = useMemo(() => rows.map(rowToMunicipalityDef), [rows]);
