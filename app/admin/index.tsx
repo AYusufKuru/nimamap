@@ -31,6 +31,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { supabase } from '../../supabase';
 import { downloadReportsZip } from '@/utils/bulkDownloadReportsZip';
 import { extractReportsStoragePath } from '@/utils/reportsStoragePath';
+import { WEB_APP_RESUME_EVENT } from '@/utils/webAppResume';
 
 const REPORT_TYPES = [
   'Menhol',
@@ -443,6 +444,15 @@ export default function AdminScreen() {
     if (session && isAdmin && !selectedProvince.trim()) {
       setRawRows([]);
     }
+  }, [session, isAdmin, selectedProvince, runQuery]);
+
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+    const onResume = () => {
+      if (session && isAdmin && selectedProvince.trim()) void runQuery();
+    };
+    window.addEventListener(WEB_APP_RESUME_EVENT, onResume);
+    return () => window.removeEventListener(WEB_APP_RESUME_EVENT, onResume);
   }, [session, isAdmin, selectedProvince, runQuery]);
 
   const clearFilters = () => {

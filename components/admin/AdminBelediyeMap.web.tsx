@@ -13,6 +13,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useAdminToast } from '@/contexts/AdminToastContext';
 import { useMunicipalities } from '@/contexts/MunicipalitiesContext';
 import { supabase } from '@/supabase';
+import { WEB_APP_RESUME_EVENT } from '@/utils/webAppResume';
 import { buildBoundaryNominatimQuery, buildBoundaryNominatimQueryAlt } from '@/utils/municipalityQuery';
 import {
   MIN_TYPICAL_DISTRICT_BBOX_DEG2,
@@ -229,6 +230,8 @@ export default function AdminBelediyeMap() {
   const [statusLine, setStatusLine] = useState('Sistem Senkronize Ediliyor...');
   /** Leaflet yalnızca istemcide yüklendikten sonra true */
   const [mapReady, setMapReady] = useState(false);
+  /** Sekme dönüşünde raporları yeniden çekmek için */
+  const [resumeTick, setResumeTick] = useState(0);
 
   const items = useMemo(() => {
     const mapped = reportRows
@@ -242,6 +245,13 @@ export default function AdminBelediyeMap() {
     if (typeof window === 'undefined') return;
     const t = window.setTimeout(() => setBooting(false), 16_000);
     return () => window.clearTimeout(t);
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const onResume = () => setResumeTick((n) => n + 1);
+    window.addEventListener(WEB_APP_RESUME_EVENT, onResume);
+    return () => window.removeEventListener(WEB_APP_RESUME_EVENT, onResume);
   }, []);
 
   useEffect(() => {
@@ -277,7 +287,7 @@ export default function AdminBelediyeMap() {
     return () => {
       cancelled = true;
     };
-  }, [session?.user?.id]);
+  }, [session?.user?.id, resumeTick]);
 
   useEffect(() => {
     selectedBelediyeRef.current = selectedBelediye;
