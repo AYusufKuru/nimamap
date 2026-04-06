@@ -213,6 +213,8 @@ export default function AdminBelediyeMap() {
   const zoomToItemRef = useRef<(item: MapItem) => void>(() => {});
   const mapResizeObserverRef = useRef<ResizeObserver | null>(null);
   const winResizeHandlerRef = useRef<(() => void) | null>(null);
+  /** Rapor fetch yarışında yalnızca son istek loading’i kapatsın (spinner takılmasın) */
+  const reportFetchGenRef = useRef(0);
 
   const [booting, setBooting] = useState(true);
   const [reportRows, setReportRows] = useState<ReportRowForMap[]>([]);
@@ -249,9 +251,19 @@ export default function AdminBelediyeMap() {
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
-    const onResume = () => setResumeTick((n) => n + 1);
+    let debounce: ReturnType<typeof setTimeout> | null = null;
+    const onResume = () => {
+      if (debounce) clearTimeout(debounce);
+      debounce = setTimeout(() => {
+        debounce = null;
+        setResumeTick((n) => n + 1);
+      }, 150);
+    };
     window.addEventListener(WEB_APP_RESUME_EVENT, onResume);
-    return () => window.removeEventListener(WEB_APP_RESUME_EVENT, onResume);
+    return () => {
+      if (debounce) clearTimeout(debounce);
+      window.removeEventListener(WEB_APP_RESUME_EVENT, onResume);
+    };
   }, []);
 
   useEffect(() => {
@@ -261,13 +273,15 @@ export default function AdminBelediyeMap() {
       setReportsError(null);
       return;
     }
-    let cancelled = false;
+
+    const gen = ++reportFetchGenRef.current;
+    setReportsLoading(true);
+    setReportsError(null);
+
     (async () => {
-      setReportsLoading(true);
-      setReportsError(null);
       try {
         const { data, error } = await supabase.from('report_logs').select('*').limit(8000);
-        if (cancelled) return;
+        if (gen !== reportFetchGenRef.current) return;
         if (error) {
           setReportsError(error.message);
           setReportRows([]);
@@ -279,14 +293,17 @@ export default function AdminBelediyeMap() {
           const tb = b.created_at ? new Date(b.created_at).getTime() : 0;
           return tb - ta;
         });
-        if (!cancelled) setReportRows(sorted);
+        setReportRows(sorted);
+      } catch (e) {
+        if (gen !== reportFetchGenRef.current) return;
+        setReportsError(e instanceof Error ? e.message : String(e));
+        setReportRows([]);
       } finally {
-        if (!cancelled) setReportsLoading(false);
+        if (gen === reportFetchGenRef.current) {
+          setReportsLoading(false);
+        }
       }
     })();
-    return () => {
-      cancelled = true;
-    };
   }, [session?.user?.id, resumeTick]);
 
   useEffect(() => {
