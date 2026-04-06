@@ -1,12 +1,17 @@
 import { serve } from 'https://deno.land/std@0.177.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.0';
 
-/** Yerel geliştirme (Expo web). Production’da mutlaka secret ile genişletin. */
+/**
+ * Tarayıcıdan Edge Function çağrısı için izin verilen Origin’ler (CORS).
+ * Supabase’te `ALLOWED_ORIGINS` secret’ı tanımlıysa bu liste yerine o kullanılır
+ * (virgülle ayırın; production + localhost’u birlikte yazın).
+ */
 const DEFAULT_ALLOWED_ORIGINS = [
   'http://localhost:8081',
   'http://127.0.0.1:8081',
   'http://localhost:19006',
   'http://localhost:19000',
+  'https://nima-map.vercel.app',
 ];
 
 const MAX_BODY_BYTES = 48_000;

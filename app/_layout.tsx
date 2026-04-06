@@ -3,7 +3,6 @@ import { Stack } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useState } from 'react';
-import { Platform } from 'react-native';
 import 'react-native-reanimated';
 
 import { useColorScheme } from '@/hooks/use-color-scheme';
@@ -35,26 +34,6 @@ export default function RootLayout() {
     if (appReady) {
       SplashScreen.hideAsync();
     }
-  }, [appReady]);
-
-  /**
-   * Web: başka sekmeye gidip geri gelince tam yenileme (F5) — arka planda donan veri/oturum için.
-   */
-  useEffect(() => {
-    if (!appReady || Platform.OS !== 'web' || typeof document === 'undefined') return;
-    let wasHidden = false;
-    const onVis = () => {
-      if (document.visibilityState === 'hidden') {
-        wasHidden = true;
-        return;
-      }
-      if (document.visibilityState === 'visible' && wasHidden) {
-        wasHidden = false;
-        window.location.reload();
-      }
-    };
-    document.addEventListener('visibilitychange', onVis);
-    return () => document.removeEventListener('visibilitychange', onVis);
   }, [appReady]);
 
   if (!appReady) {
