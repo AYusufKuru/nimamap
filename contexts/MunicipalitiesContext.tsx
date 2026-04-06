@@ -3,6 +3,7 @@ import { OTHER_MUNICIPALITY } from '@/constants/belediyeMapData';
 import { supabase } from '@/supabase';
 import { buildMunicipalitySearchQuery } from '@/utils/municipalityQuery';
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import { Platform } from 'react-native';
 
 export type MunicipalityRow = {
   id: string;
@@ -87,6 +88,16 @@ export function MunicipalitiesProvider({ children }: { children: React.ReactNode
       cancelled = true;
       subscription.unsubscribe();
     };
+  }, [load]);
+
+  /** Web: sekme dönüşünde belediye listesi boş kalmasın */
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof document === 'undefined') return;
+    const onVis = () => {
+      if (document.visibilityState === 'visible') void load();
+    };
+    document.addEventListener('visibilitychange', onVis);
+    return () => document.removeEventListener('visibilitychange', onVis);
   }, [load]);
 
   const municipalities = useMemo(() => rows.map(rowToMunicipalityDef), [rows]);
