@@ -9,6 +9,7 @@ import 'react-native-reanimated';
 import { AuthProvider } from '@/contexts/AuthContext';
 import { MunicipalitiesProvider } from '@/contexts/MunicipalitiesContext';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { supabase } from '@/supabase';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 SplashScreen.preventAutoHideAsync();
@@ -37,23 +38,43 @@ export default function RootLayout() {
     }
   }, [appReady]);
 
-  /** Web: başka sekmeye gidip geri gelince tam yenileme — tutarlı veri için en güvenilir yol */
+  /**
+   * Web’de tarayıcı arka plandaki sekmeyi donduruyor; Supabase’in token auto-refresh
+   * `setInterval` zamanlayıcısı askıya alınınca dönüşte takılı auth-lock yüzünden tüm sorgular
+   * (raporlar, belediyeler vs.) sonsuza kadar yükleniyor durumunda kalıyordu. Sekme görünür
+   * olunca refresh’i baştan başlat + session’ı yenile, gizliyken durdur.
+   */
   useEffect(() => {
-    if (!appReady || Platform.OS !== 'web' || typeof document === 'undefined') return;
-    let wasHidden = false;
-    const onVis = () => {
-      if (document.visibilityState === 'hidden') {
-        wasHidden = true;
-        return;
-      }
-      if (document.visibilityState === 'visible' && wasHidden) {
-        wasHidden = false;
-        window.location.reload();
+    if (Platform.OS !== 'web' || typeof document === 'undefined') return;
+
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        try {
+          supabase.auth.startAutoRefresh();
+        } catch {
+          /* ignore */
+        }
+        void supabase.auth.getSession().then(({ data }) => {
+          const session = data.session;
+          if (!session) return;
+          const expiresAt = (session.expires_at ?? 0) * 1000;
+          const skewMs = 60_000;
+          if (!expiresAt || expiresAt - Date.now() < skewMs) {
+            void supabase.auth.refreshSession().catch(() => {});
+          }
+        });
+      } else {
+        try {
+          supabase.auth.stopAutoRefresh();
+        } catch {
+          /* ignore */
+        }
       }
     };
-    document.addEventListener('visibilitychange', onVis);
-    return () => document.removeEventListener('visibilitychange', onVis);
-  }, [appReady]);
+
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => document.removeEventListener('visibilitychange', onVisibility);
+  }, []);
 
   if (!appReady) {
     return null;

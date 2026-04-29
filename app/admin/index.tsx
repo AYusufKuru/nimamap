@@ -16,7 +16,6 @@ import type { ViewStyle } from 'react-native';
 import {
     ActivityIndicator,
     FlatList,
-    Linking,
     Modal,
     Platform,
     Pressable,
@@ -30,6 +29,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { supabase } from '../../supabase';
 import { downloadReportsZip } from '@/utils/bulkDownloadReportsZip';
+import { openExternalUrl } from '@/utils/openExternalUrl';
 import { extractReportsStoragePath } from '@/utils/reportsStoragePath';
 
 const REPORT_TYPES = [
@@ -67,8 +67,11 @@ type ProfileOption = { id: string; email: string | null; full_name: string | nul
 /** API’den gelen satır (PostgREST embed FK olmadan ilişki kuramıyor; profiles ayrı birleştirilir) */
 type RawReportRow = Omit<ReportRow, 'profiles'>;
 
-function escapeIlike(s: string): string {
-  return s.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_');
+/** Filtre seçicileri için il kapsamındaki benzersiz adres parçaları */
+type LocationFacetRow = Pick<RawReportRow, 'municipality_name' | 'ilce' | 'neighborhood' | 'sokak'>;
+
+function normLoc(s: string | null | undefined): string {
+  return (s ?? '').trim();
 }
 
 /** Web: tarayıcı indirmesi; native: URL aç */
@@ -109,6 +112,13 @@ export default function AdminScreen() {
 
   const [selectedProvince, setSelectedProvince] = useState('');
   const [provinceModalOpen, setProvinceModalOpen] = useState(false);
+
+  const [locationFacets, setLocationFacets] = useState<LocationFacetRow[]>([]);
+  const [locationFacetsLoading, setLocationFacetsLoading] = useState(false);
+  const [municipalityPickerOpen, setMunicipalityPickerOpen] = useState(false);
+  const [ilcePickerOpen, setIlcePickerOpen] = useState(false);
+  const [neighborhoodPickerOpen, setNeighborhoodPickerOpen] = useState(false);
+  const [sokakPickerOpen, setSokakPickerOpen] = useState(false);
 
   /** PDF’li satırların toplu ZIP indirmesi için seçim */
   const [selectedReportIds, setSelectedReportIds] = useState<string[]>([]);
@@ -300,6 +310,54 @@ export default function AdminScreen() {
     return s.length > 30 ? `${s.slice(0, 30)}…` : s;
   }, [operatorFilter, typeFilter]);
 
+  const municipalityOptions = useMemo(() => {
+    const s = new Set<string>();
+    for (const r of locationFacets) {
+      const v = normLoc(r.municipality_name);
+      if (v) s.add(v);
+    }
+    return [...s].sort((a, b) => a.localeCompare(b, 'tr'));
+  }, [locationFacets]);
+
+  const ilceOptions = useMemo(() => {
+    const s = new Set<string>();
+    const mSel = normLoc(municipalityFilter);
+    for (const r of locationFacets) {
+      if (mSel && normLoc(r.municipality_name) !== mSel) continue;
+      const v = normLoc(r.ilce);
+      if (v) s.add(v);
+    }
+    return [...s].sort((a, b) => a.localeCompare(b, 'tr'));
+  }, [locationFacets, municipalityFilter]);
+
+  const neighborhoodOptions = useMemo(() => {
+    const s = new Set<string>();
+    const mSel = normLoc(municipalityFilter);
+    const iSel = normLoc(ilceFilter);
+    for (const r of locationFacets) {
+      if (mSel && normLoc(r.municipality_name) !== mSel) continue;
+      if (iSel && normLoc(r.ilce) !== iSel) continue;
+      const v = normLoc(r.neighborhood);
+      if (v) s.add(v);
+    }
+    return [...s].sort((a, b) => a.localeCompare(b, 'tr'));
+  }, [locationFacets, municipalityFilter, ilceFilter]);
+
+  const sokakOptions = useMemo(() => {
+    const s = new Set<string>();
+    const mSel = normLoc(municipalityFilter);
+    const iSel = normLoc(ilceFilter);
+    const nSel = normLoc(neighborhoodFilter);
+    for (const r of locationFacets) {
+      if (mSel && normLoc(r.municipality_name) !== mSel) continue;
+      if (iSel && normLoc(r.ilce) !== iSel) continue;
+      if (nSel && normLoc(r.neighborhood) !== nSel) continue;
+      const v = normLoc(r.sokak);
+      if (v) s.add(v);
+    }
+    return [...s].sort((a, b) => a.localeCompare(b, 'tr'));
+  }, [locationFacets, municipalityFilter, ilceFilter, neighborhoodFilter]);
+
   const QUERY_TIMEOUT_MS = 45_000;
 
   const selectProvince = useCallback((p: string) => {
@@ -312,6 +370,71 @@ export default function AdminScreen() {
     setSelectedProvince(p);
     setProvinceModalOpen(false);
   }, []);
+
+  const loadLocationFacets = useCallback(async () => {
+    if (!session || !isAdmin || !selectedProvince.trim()) return;
+
+    const spNorm = selectedProvince.trim().toLowerCase();
+    const inProvince = municipalities.filter(
+      (m) => (m.province || '').trim().toLowerCase() === spNorm
+    );
+    const provinceMuniIds = inProvince.map((m) => m.id);
+    const provinceMuniNames = [...new Set(inProvince.map((m) => m.name.trim()).filter(Boolean))];
+
+    if (provinceMuniIds.length === 0 && provinceMuniNames.length === 0) return;
+
+    setLocationFacetsLoading(true);
+    const col = 'municipality_name,ilce,neighborhood,sokak';
+    try {
+      const promises = [];
+      if (provinceMuniIds.length > 0) {
+        promises.push(
+          supabase.from('report_logs').select(col).in('municipality_id', provinceMuniIds).limit(8000)
+        );
+      }
+      if (provinceMuniNames.length > 0) {
+        promises.push(
+          supabase
+            .from('report_logs')
+            .select(col)
+            .is('municipality_id', null)
+            .in('municipality_name', provinceMuniNames)
+            .limit(8000)
+        );
+      }
+      if (promises.length === 0) return;
+
+      const results = await Promise.all(promises);
+      for (const res of results) {
+        if (res.error) {
+          console.error(res.error);
+          setLocationFacets([]);
+          showToast({
+            message: String(res.error.message ?? res.error),
+            variant: 'error',
+            duration: 5000,
+          });
+          return;
+        }
+      }
+      const merged: LocationFacetRow[] = [];
+      for (const res of results) {
+        merged.push(...((res.data ?? []) as LocationFacetRow[]));
+      }
+      setLocationFacets(merged);
+    } finally {
+      setLocationFacetsLoading(false);
+    }
+  }, [session, isAdmin, selectedProvince, municipalities, showToast]);
+
+  useEffect(() => {
+    if (!session || !isAdmin || !selectedProvince.trim()) {
+      setLocationFacets([]);
+      setLocationFacetsLoading(false);
+      return;
+    }
+    void loadLocationFacets();
+  }, [session, isAdmin, selectedProvince, loadLocationFacets]);
 
   const runQuery = useCallback(async () => {
     if (!selectedProvince.trim()) {
@@ -336,16 +459,16 @@ export default function AdminScreen() {
       if (typeFilter) q = q.eq('type', typeFilter);
       if (userFilter) q = q.eq('user_id', userFilter);
       if (municipalityFilter.trim()) {
-        q = q.ilike('municipality_name', `%${escapeIlike(municipalityFilter.trim())}%`);
+        q = q.eq('municipality_name', municipalityFilter.trim());
       }
       if (neighborhoodFilter.trim()) {
-        q = q.ilike('neighborhood', `%${escapeIlike(neighborhoodFilter.trim())}%`);
+        q = q.eq('neighborhood', neighborhoodFilter.trim());
       }
       if (sokakFilter.trim()) {
-        q = q.ilike('sokak', `%${escapeIlike(sokakFilter.trim())}%`);
+        q = q.eq('sokak', sokakFilter.trim());
       }
       if (ilceFilter.trim()) {
-        q = q.ilike('ilce', `%${escapeIlike(ilceFilter.trim())}%`);
+        q = q.eq('ilce', ilceFilter.trim());
       }
       if (operatorFilter.trim()) {
         q = q.eq('operator', operatorFilter.trim());
@@ -447,8 +570,11 @@ export default function AdminScreen() {
 
   useFocusEffect(
     useCallback(() => {
-      if (session && isAdmin && selectedProvince.trim()) void runQuery();
-    }, [session, isAdmin, selectedProvince, runQuery])
+      if (session && isAdmin && selectedProvince.trim()) {
+        void loadLocationFacets();
+        void runQuery();
+      }
+    }, [session, isAdmin, selectedProvince, runQuery, loadLocationFacets])
   );
 
   const clearFilters = () => {
@@ -483,13 +609,14 @@ export default function AdminScreen() {
           }
         }
         setRawRows((prev) => prev.filter((r) => r.id !== row.id));
+        void loadLocationFacets();
         showToast({ message: 'Kayıt silindi' });
         return true;
       } finally {
         setDeletingId(null);
       }
     },
-    [showToast]
+    [showToast, loadLocationFacets]
   );
 
   const dismissReportDelete = () => {
@@ -659,40 +786,110 @@ export default function AdminScreen() {
             ) : null}
 
             <Text style={styles.labelCompact}>Belediye</Text>
-            <TextInput
-              style={styles.inputCompact}
-              value={municipalityFilter}
-              onChangeText={setMunicipalityFilter}
-              placeholder="…"
-              placeholderTextColor={adminTheme.textMuted}
-            />
+            {!selectedProvince.trim() ? (
+              <View style={[styles.userPickerBtn, styles.pickerDisabled]}>
+                <Text style={[styles.userPickerText, { color: adminTheme.textMuted }]} numberOfLines={1}>
+                  Önce il seçin
+                </Text>
+              </View>
+            ) : (
+              <TouchableOpacity
+                style={styles.userPickerBtn}
+                onPress={() => setMunicipalityPickerOpen(true)}
+                activeOpacity={0.7}
+                disabled={locationFacetsLoading}
+              >
+                <Text
+                  style={[styles.userPickerText, !municipalityFilter.trim() && { color: adminTheme.textMuted }]}
+                  numberOfLines={2}
+                >
+                  {municipalityFilter.trim() || 'Tümü'}
+                </Text>
+                {locationFacetsLoading ? (
+                  <ActivityIndicator size="small" color={adminTheme.accent} />
+                ) : (
+                  <MaterialIcons name="arrow-drop-down" size={22} color={adminTheme.textMuted} />
+                )}
+              </TouchableOpacity>
+            )}
 
             <Text style={styles.labelCompact}>İlçe</Text>
-            <TextInput
-              style={styles.inputCompact}
-              value={ilceFilter}
-              onChangeText={setIlceFilter}
-              placeholder="…"
-              placeholderTextColor={adminTheme.textMuted}
-            />
+            {!selectedProvince.trim() ? (
+              <View style={[styles.userPickerBtn, styles.pickerDisabled]}>
+                <Text style={[styles.userPickerText, { color: adminTheme.textMuted }]} numberOfLines={1}>
+                  Önce il seçin
+                </Text>
+              </View>
+            ) : (
+              <TouchableOpacity
+                style={styles.userPickerBtn}
+                onPress={() => setIlcePickerOpen(true)}
+                activeOpacity={0.7}
+                disabled={locationFacetsLoading}
+              >
+                <Text style={[styles.userPickerText, !ilceFilter.trim() && { color: adminTheme.textMuted }]} numberOfLines={2}>
+                  {ilceFilter.trim() || 'Tümü'}
+                </Text>
+                {locationFacetsLoading ? (
+                  <ActivityIndicator size="small" color={adminTheme.accent} />
+                ) : (
+                  <MaterialIcons name="arrow-drop-down" size={22} color={adminTheme.textMuted} />
+                )}
+              </TouchableOpacity>
+            )}
 
             <Text style={styles.labelCompact}>Mahalle</Text>
-            <TextInput
-              style={styles.inputCompact}
-              value={neighborhoodFilter}
-              onChangeText={setNeighborhoodFilter}
-              placeholder="…"
-              placeholderTextColor={adminTheme.textMuted}
-            />
+            {!selectedProvince.trim() ? (
+              <View style={[styles.userPickerBtn, styles.pickerDisabled]}>
+                <Text style={[styles.userPickerText, { color: adminTheme.textMuted }]} numberOfLines={1}>
+                  Önce il seçin
+                </Text>
+              </View>
+            ) : (
+              <TouchableOpacity
+                style={styles.userPickerBtn}
+                onPress={() => setNeighborhoodPickerOpen(true)}
+                activeOpacity={0.7}
+                disabled={locationFacetsLoading}
+              >
+                <Text
+                  style={[styles.userPickerText, !neighborhoodFilter.trim() && { color: adminTheme.textMuted }]}
+                  numberOfLines={2}
+                >
+                  {neighborhoodFilter.trim() || 'Tümü'}
+                </Text>
+                {locationFacetsLoading ? (
+                  <ActivityIndicator size="small" color={adminTheme.accent} />
+                ) : (
+                  <MaterialIcons name="arrow-drop-down" size={22} color={adminTheme.textMuted} />
+                )}
+              </TouchableOpacity>
+            )}
 
             <Text style={styles.labelCompact}>Sokak / cadde / bulvar</Text>
-            <TextInput
-              style={styles.inputCompact}
-              value={sokakFilter}
-              onChangeText={setSokakFilter}
-              placeholder="Cadde, sokak veya bulvar adı"
-              placeholderTextColor={adminTheme.textMuted}
-            />
+            {!selectedProvince.trim() ? (
+              <View style={[styles.userPickerBtn, styles.pickerDisabled]}>
+                <Text style={[styles.userPickerText, { color: adminTheme.textMuted }]} numberOfLines={1}>
+                  Önce il seçin
+                </Text>
+              </View>
+            ) : (
+              <TouchableOpacity
+                style={styles.userPickerBtn}
+                onPress={() => setSokakPickerOpen(true)}
+                activeOpacity={0.7}
+                disabled={locationFacetsLoading}
+              >
+                <Text style={[styles.userPickerText, !sokakFilter.trim() && { color: adminTheme.textMuted }]} numberOfLines={2}>
+                  {sokakFilter.trim() || 'Tümü'}
+                </Text>
+                {locationFacetsLoading ? (
+                  <ActivityIndicator size="small" color={adminTheme.accent} />
+                ) : (
+                  <MaterialIcons name="arrow-drop-down" size={22} color={adminTheme.textMuted} />
+                )}
+              </TouchableOpacity>
+            )}
 
             <Text style={styles.labelCompact}>Kullanıcı</Text>
             {usersLoading ? (
@@ -851,7 +1048,15 @@ export default function AdminScreen() {
                 <View style={styles.pdfActions}>
                   <TouchableOpacity
                     style={styles.cardIconBtn}
-                    onPress={() => Linking.openURL(item.pdf_url!)}
+                    onPress={() =>
+                      void openExternalUrl(item.pdf_url!).catch(() =>
+                        showToast({
+                          message: 'PDF açılamadı. Bağlantıyı veya tarayıcı izinlerini kontrol edin.',
+                          variant: 'error',
+                          duration: 4000,
+                        })
+                      )
+                    }
                     accessibilityLabel="PDF aç"
                   >
                     <MaterialIcons name="picture-as-pdf" size={24} color={adminTheme.danger} />
@@ -1046,6 +1251,194 @@ export default function AdminScreen() {
                 >
                   <Text style={styles.modalRowText} numberOfLines={2}>
                     {userLabel(u)}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal
+        visible={municipalityPickerOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setMunicipalityPickerOpen(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <Pressable style={StyleSheet.absoluteFill} onPress={() => setMunicipalityPickerOpen(false)} />
+          <View style={[styles.modalCard, { maxHeight: '70%' }]}>
+            <Text style={styles.modalTitle}>Belediye seç</Text>
+            <Text style={styles.modalHint}>Liste, seçili ildeki kayıtlı raporlardan gelen belediye adlarıdır.</Text>
+            <ScrollView style={styles.modalScroll} keyboardShouldPersistTaps="handled">
+              <TouchableOpacity
+                style={[styles.modalRow, !municipalityFilter.trim() && styles.modalRowOn]}
+                onPress={() => {
+                  setMunicipalityFilter('');
+                  setIlceFilter('');
+                  setNeighborhoodFilter('');
+                  setSokakFilter('');
+                  setMunicipalityPickerOpen(false);
+                }}
+              >
+                <Text style={styles.modalRowText}>Tümü</Text>
+              </TouchableOpacity>
+              {municipalityOptions.length === 0 && !locationFacetsLoading ? (
+                <Text style={[styles.modalHint, { marginTop: 8 }]}>Henüz kayıtlı belediye adı yok.</Text>
+              ) : null}
+              {municipalityOptions.map((name) => (
+                <TouchableOpacity
+                  key={name}
+                  style={[styles.modalRow, municipalityFilter === name && styles.modalRowOn]}
+                  onPress={() => {
+                    setMunicipalityFilter(name);
+                    setIlceFilter('');
+                    setNeighborhoodFilter('');
+                    setSokakFilter('');
+                    setMunicipalityPickerOpen(false);
+                  }}
+                >
+                  <Text style={styles.modalRowText} numberOfLines={2}>
+                    {name}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal
+        visible={ilcePickerOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setIlcePickerOpen(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <Pressable style={StyleSheet.absoluteFill} onPress={() => setIlcePickerOpen(false)} />
+          <View style={[styles.modalCard, { maxHeight: '70%' }]}>
+            <Text style={styles.modalTitle}>İlçe seç</Text>
+            <Text style={styles.modalHint}>
+              {municipalityFilter.trim()
+                ? `Yalnızca "${municipalityFilter.trim()}" raporlarındaki ilçeler.`
+                : 'Seçili ildeki kayıtlı raporlardan gelen ilçe adları.'}
+            </Text>
+            <ScrollView style={styles.modalScroll} keyboardShouldPersistTaps="handled">
+              <TouchableOpacity
+                style={[styles.modalRow, !ilceFilter.trim() && styles.modalRowOn]}
+                onPress={() => {
+                  setIlceFilter('');
+                  setNeighborhoodFilter('');
+                  setSokakFilter('');
+                  setIlcePickerOpen(false);
+                }}
+              >
+                <Text style={styles.modalRowText}>Tümü</Text>
+              </TouchableOpacity>
+              {ilceOptions.length === 0 && !locationFacetsLoading ? (
+                <Text style={[styles.modalHint, { marginTop: 8 }]}>Henüz kayıtlı ilçe adı yok.</Text>
+              ) : null}
+              {ilceOptions.map((name) => (
+                <TouchableOpacity
+                  key={name}
+                  style={[styles.modalRow, ilceFilter === name && styles.modalRowOn]}
+                  onPress={() => {
+                    setIlceFilter(name);
+                    setNeighborhoodFilter('');
+                    setSokakFilter('');
+                    setIlcePickerOpen(false);
+                  }}
+                >
+                  <Text style={styles.modalRowText} numberOfLines={2}>
+                    {name}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal
+        visible={neighborhoodPickerOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setNeighborhoodPickerOpen(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <Pressable style={StyleSheet.absoluteFill} onPress={() => setNeighborhoodPickerOpen(false)} />
+          <View style={[styles.modalCard, { maxHeight: '70%' }]}>
+            <Text style={styles.modalTitle}>Mahalle seç</Text>
+            <Text style={styles.modalHint}>Üst filtrelerle eşleşen kayıtlardaki mahalle adları.</Text>
+            <ScrollView style={styles.modalScroll} keyboardShouldPersistTaps="handled">
+              <TouchableOpacity
+                style={[styles.modalRow, !neighborhoodFilter.trim() && styles.modalRowOn]}
+                onPress={() => {
+                  setNeighborhoodFilter('');
+                  setSokakFilter('');
+                  setNeighborhoodPickerOpen(false);
+                }}
+              >
+                <Text style={styles.modalRowText}>Tümü</Text>
+              </TouchableOpacity>
+              {neighborhoodOptions.length === 0 && !locationFacetsLoading ? (
+                <Text style={[styles.modalHint, { marginTop: 8 }]}>Henüz kayıtlı mahalle adı yok.</Text>
+              ) : null}
+              {neighborhoodOptions.map((name) => (
+                <TouchableOpacity
+                  key={name}
+                  style={[styles.modalRow, neighborhoodFilter === name && styles.modalRowOn]}
+                  onPress={() => {
+                    setNeighborhoodFilter(name);
+                    setSokakFilter('');
+                    setNeighborhoodPickerOpen(false);
+                  }}
+                >
+                  <Text style={styles.modalRowText} numberOfLines={2}>
+                    {name}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal
+        visible={sokakPickerOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setSokakPickerOpen(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <Pressable style={StyleSheet.absoluteFill} onPress={() => setSokakPickerOpen(false)} />
+          <View style={[styles.modalCard, { maxHeight: '70%' }]}>
+            <Text style={styles.modalTitle}>Sokak / cadde / bulvar seç</Text>
+            <Text style={styles.modalHint}>Üst filtrelerle eşleşen kayıtlardaki cadde, sokak veya bulvar adları.</Text>
+            <ScrollView style={styles.modalScroll} keyboardShouldPersistTaps="handled">
+              <TouchableOpacity
+                style={[styles.modalRow, !sokakFilter.trim() && styles.modalRowOn]}
+                onPress={() => {
+                  setSokakFilter('');
+                  setSokakPickerOpen(false);
+                }}
+              >
+                <Text style={styles.modalRowText}>Tümü</Text>
+              </TouchableOpacity>
+              {sokakOptions.length === 0 && !locationFacetsLoading ? (
+                <Text style={[styles.modalHint, { marginTop: 8 }]}>Henüz kayıtlı sokak/cadde/bulvar adı yok.</Text>
+              ) : null}
+              {sokakOptions.map((name) => (
+                <TouchableOpacity
+                  key={name}
+                  style={[styles.modalRow, sokakFilter === name && styles.modalRowOn]}
+                  onPress={() => {
+                    setSokakFilter(name);
+                    setSokakPickerOpen(false);
+                  }}
+                >
+                  <Text style={styles.modalRowText} numberOfLines={2}>
+                    {name}
                   </Text>
                 </TouchableOpacity>
               ))}
@@ -1271,6 +1664,7 @@ const styles = StyleSheet.create({
     backgroundColor: adminTheme.surfaceMuted,
   },
   userPickerText: { flex: 1, fontSize: 12, color: adminTheme.text, marginRight: 4 },
+  pickerDisabled: { opacity: 0.72 },
   filterButtonsCompact: { flexDirection: 'column', gap: 6, marginTop: 8 },
   primaryBtnCompact: {
     width: '100%',

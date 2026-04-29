@@ -17,6 +17,7 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import ViewShot from 'react-native-view-shot';
 import { supabase } from '../supabase';
 import { generatePdfHtml } from '../utils/pdfTemplates';
+import { openExternalUrl } from '../utils/openExternalUrl';
 
 const LOCATION_FETCH_MS = 28000;
 const GEOCODE_FETCH_MS = 15000;
@@ -1126,7 +1127,14 @@ export default function App() {
                         ) : null}
                       </View>
                       <TouchableOpacity 
-                        onPress={() => Sharing.shareAsync(report.pdf_url)} 
+                        onPress={() => {
+                          if (!report.pdf_url) return;
+                          if (Platform.OS === 'web') {
+                            void openExternalUrl(report.pdf_url);
+                            return;
+                          }
+                          void Sharing.shareAsync(report.pdf_url);
+                        }} 
                         style={{padding: 12, backgroundColor: '#f0f0f0', borderRadius: 20}}
                       >
                         <MaterialIcons name="picture-as-pdf" size={24} color="#f44336" />

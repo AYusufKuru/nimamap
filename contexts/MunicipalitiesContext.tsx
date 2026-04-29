@@ -78,10 +78,17 @@ export function MunicipalitiesProvider({ children }: { children: React.ReactNode
       if (!cancelled) await load();
     };
     void boot();
+    /**
+     * Yalnızca giriş/çıkışta yeniden yükle. `TOKEN_REFRESHED` (sekme görünür olunca sık tetikleniyor)
+     * gereksiz yere `loading=true` yapıp listeyi flaşlıyordu; ayrıca takılı auth-kilidine sorgu kuyruğa
+     * giriyordu.
+     */
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange(() => {
-      void load();
+    } = supabase.auth.onAuthStateChange((event) => {
+      if (event === 'SIGNED_IN' || event === 'SIGNED_OUT' || event === 'USER_UPDATED') {
+        void load();
+      }
     });
     return () => {
       cancelled = true;
