@@ -2,7 +2,7 @@
   "expo": {
     "name": "Nima Map",
     "slug": "map-demo",
-    "version": "1.0.0",
+    "version": "2.0.1",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "splash": {
@@ -17,6 +17,7 @@
       "supportsTablet": true
     },
     "android": {
+      "versionCode": 11,
       "adaptiveIcon": {
         "backgroundColor": "#ffffff",
         "foregroundImage": "./assets/images/icon.png"
@@ -73,7 +74,9 @@
           "photosPermission": "Fotoğrafları galeriye kaydetmek için izne ihtiyacımız var.",
           "savePhotosPermission": "Fotoğrafları galeriye kaydetmek için izne ihtiyacımız var.",
           "isAccessMediaLocationEnabled": true,
-          "granularPermissions": ["photo"]
+          "granularPermissions": [
+            "photo"
+          ]
         }
       ]
     ],
@@ -84,9 +87,8 @@
     "extra": {
       "router": {},
       "eas": {
-        "projectId": "5adf8c57-8cec-4b19-a4aa-7ad19a3194fe"
+        "projectId": "d7052e97-132d-46c0-89a1-800a1a99a933"
       }
-    },
-    "owner": "nimamapapp"
+    }
   }
 }

@@ -1,7 +1,7 @@
 import { AdminTopBar } from '@/components/admin/AdminTopBar';
 import { adminTheme } from '@/constants/adminTheme';
-import { useAuth } from '@/contexts/AuthContext';
 import { useAdminToast } from '@/contexts/AdminToastContext';
+import { useAuth } from '@/contexts/AuthContext';
 import { useMunicipalities } from '@/contexts/MunicipalitiesContext';
 import { asHref } from '@/utils/asHref';
 import { getFunctionInvokeErrorMessage } from '@/utils/parseSupabaseFunctionError';
